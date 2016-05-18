@@ -14,120 +14,145 @@ enum i {  // instruments
     NUMINSTRUMENTS  // add instruments above this line
 };
 
-enum Modes {
+enum m {
   CONNECT, 
     PERFORM
 };
+
 ArrayList<Instrument> instruments = new ArrayList<Instrument>();
 int baudRate = 115200;
-color activeColor = color(255, 0, 0, 255);
-color inactiveColor = color(255, 0, 0, 100);
 byte inByte, midi_note, midi_vel;
-int instrument_index;
+int speed, current_beat, notes, mode, max_notes_on_beat, instrument_index;
+String song_title;
 Instrument instrument;
 Table song;
-TableRow notes;
-
-/*********** Configuration Parameters **************/
-int speed = 2;
-int beat_length = 4;  // 1/4 notes
-int desired_BPM = 60;  // set beat per minute rate
-int beat = 0;
-int notes_on_beat;
-byte test_note = 60; // Midi middle C
-byte mode = (byte) Modes.CONNECT.ordinal();
-
-void setup() {  
-  size(1000, 500);  
-  frameRate(speed);
-  song = loadTable("DemoSong.csv", "header");  
-  printArray(Serial.list());
-  initialize(this);
-}
-
-void draw() {    
-  background(0);
-  //println(frameRate);
-  //checkInstruments();
-  conductInstruments();
-  drawInstruments();
-}  // end draw()
 
 void initialize(PApplet parent) {
   for (int instr = 0; instr<i.NUMINSTRUMENTS.ordinal(); instr++) 
     instruments.add(new Instrument());    
-  
-  instruments.get(i.GRAVITY_XYL.ordinal()).id = 1;  // nth connect in serial list
-  //instruments.get(i.XYLOCUBE.ordinal()).id = 2;
+
+  /*********** Start Configuration Parameters **************/
+
+  speed = 2;  // frame rate
+  current_beat = 0;  
+  mode = m.CONNECT.ordinal();
+  //mode = m.PERFORM.ordinal();
+  song_title = "DemoSong.csv";
+
+  instruments.get(i.GRAVITY_XYL.ordinal()).id = 2;  // nth device in serial list
+  //instruments.get(i.XYLOCUBE.ordinal()).id = 1;
   //instruments.get(i.FLOPPY.ordinal()).id = 3;
   //instruments.get(i.MELODICA.ordinal()).id = 4;
   //instruments.get(i.XYLOPHONE.ordinal()).id = 5;
   //instruments.get(i.GUITAR.ordinal()).id = 6;
+
+  /*********** End Configuration Parameters **************/
 
   for (int instr = 0; instr<i.NUMINSTRUMENTS.ordinal(); instr++) {
     instruments.get(instr).comm = new Serial(parent, Serial.list()[instruments.get(instr).id], baudRate);
     instruments.get(instr).init();
   }
 
-  notes_on_beat = (song.getColumnCount()-1)/3;
+  song = loadTable(song_title, "header");
+  max_notes_on_beat = (song.getColumnCount()-1)/3;
+  notes = song.getColumnCount();
   int spacing = 10;
   float instrument_width = (width-(2*spacing)-((instruments.size()-1)*spacing))/((float)instruments.size());
   for (int i = 0; i < instruments.size(); i++) {
     instruments.get(i).x = spacing+i*(instrument_width+spacing);
     instruments.get(i).w = instrument_width;
   }
+  if (mode == m.CONNECT.ordinal()) speed = 100;
 }
+
+void setup() {  
+  size(1000, 500);    
+  initialize(this);
+  frameRate(speed);  
+  printArray(Serial.list());
+}
+
+void draw() {    
+  background(0);
+  ////println(frameRate);
+  switch(mode) {
+  case 0:
+    checkInstruments();
+    break;
+  case 1:
+    conductInstruments();
+    break;
+  default:
+    drawInstruments();
+  }
+}  // end draw()
 
 void conductInstruments() {  
-  for (int col = 0; col<notes_on_beat; col++) {
-    instrument_index = getInstrumentIndex(song.getInt(beat, col*3 + 1));    
-    if(instrument_index < 0) break; // invalid channel number
-    instrument = instruments.get(instrument_index);
-    byte n = (byte) song.getInt(beat, col*3 + 2);
-    byte v = (byte) song.getInt(beat, col*3 + 3);
-    instrument.comm.write(n);
-    instrument.comm.write(v);
-    print(instrument.id);
-    print("\t");
-    println(n);
+  for (int note = 0; note<notes; note++) {
+    for (int col = 0; col<max_notes_on_beat; col++) {
+      if (song.getInt(note, 0) != current_beat) break;  // no notes on this beat
+      instrument_index = getInstrumentIndex(song.getInt(current_beat, col*3 + 1));    
+      if (instrument_index < 0) break;                // invalid channel number
+      instrument = instruments.get(instrument_index);
+      byte n = (byte) song.getInt(current_beat, col*3 + 2);
+      byte v = (byte) song.getInt(current_beat, col*3 + 3);
+      instrument.comm.write(n);
+      instrument.comm.write(v);
+      //print(instrument.id);
+      //print("\t");
+      //println(n);
+    }
+    ++current_beat;
+    //if (current_beat==notes) current_beat = 0;  // repeat song
+    drawInstruments();
   }
-  ++beat;
-  if (beat==song.getRowCount())
-    beat = 0;
 }
 
-void checkInstruments() {
-  for (int i = 0; i<instruments.size(); i++) {       
-    if (instruments.get(i).comm.available() > 0) {      
-      //inByte = instruments.get(i).comm.read();
-      setStatus(i, inByte);
+void pingInstrument() {
+  Instrument test_connection;
+  for (int i = 0; i<instruments.size(); i++) {   
+    test_connection = instruments.get(i);
+    if (mouseCollision(test_connection)) {
+      test_connection.comm.write(test_connection.test_val);   // send test val as note
+      test_connection.comm.write(test_connection.test_val);   // send test val as vel
+      test_connection.fill = test_connection.inactive;
     }
   }
 }
 
+void checkInstruments() {
+  Instrument test_connection;
+  for (int i = 0; i<instruments.size(); i++) {       
+    test_connection = instruments.get(i);
+    if (test_connection.comm.available() > 0) {      
+      inByte = (byte) test_connection.comm.read();
+      setStatus(test_connection, inByte);
+    }
+  }
+  drawInstruments();
+}
+
 void drawInstruments() {
-  for (int i = 0; i<instruments.size(); i++) {        
-    fill(instruments.get(i).fill);
-    rect(instruments.get(i).x, instruments.get(i).y, instruments.get(i).w, instruments.get(i).h);
+  Instrument draw_instrument;
+  for (int i = 0; i<instruments.size(); i++) {     
+    draw_instrument = instruments.get(i); 
+    fill(draw_instrument.fill);
+    rect(draw_instrument.x, draw_instrument.y, draw_instrument.w, draw_instrument.h);
   }
 }
 
-void setStatus(int i, int vel) {
-  if (vel > 0) instruments.get(i).fill = activeColor;
-  else instruments.get(i).fill = inactiveColor;
+void setStatus(Instrument i, int val) {
+  if (val == i.test_val) i.fill = i.active;
+  else i.fill = i.inactive;
 }
 
 void mouseClicked() {  
-  beat = 0;  // restart song
-}  // end keyPressed()
+  pingInstrument();
+}  // end mouseClicked()
 
-boolean mouseCollision(float x, float y, float w, float h) {
-  if (mouseX > x && mouseX < (x+w) && mouseY > y && mouseY < (y+h)) return true;
+boolean mouseCollision(Instrument i) {
+  if (mouseX > i.x && mouseX < (i.x+i.w) && mouseY > i.y && mouseY < (i.y+i.h)) return true;
   else return false;
-}
-
-float bpmToFrameRate(int bpm) {  
-  return 1/(4/(beat_length*(bpm/60.0)));  // assumes 4/4 signature
 }
 
 int getInstrumentIndex(int channel) {
@@ -135,8 +160,8 @@ int getInstrumentIndex(int channel) {
   case 1:
     return i.GRAVITY_XYL.ordinal();   
 
-    //case 2:
-    //return i.XYLOCUBE.ordinal();
+  //case 2:
+  //  return i.XYLOCUBE.ordinal();
 
   default:
     return -1;
@@ -146,9 +171,11 @@ int getInstrumentIndex(int channel) {
 class Instrument { 
   Serial comm;
   int id, baud;
-  float x, y, w,h,d, o; // x, y, diameter, opacity
-  color fill, stroke, strokeWeight;
-  Instrument (){
+  byte test_val;
+  float x, y, w, h, d, o; // x, y, diameter, opacity
+  color fill, active, inactive, stroke, strokeWeight;
+  Instrument () {
+    test_val = 99;
   }
 
   void init() {
@@ -157,6 +184,15 @@ class Instrument {
     this.w = 150;
     this.x = width/2 - this.w/2;
     this.y = height/2 - this.h/2;
-    this.fill = inactiveColor;
+    this.active = randomColor();
+    this.inactive = color(this.active, 100);
+    this.fill = this.active;
   }
+}
+
+color randomColor() {
+  float r = random(0, 255);
+  float g = random(0, 255);
+  float b = random(0, 255);
+  return color(r, g, b);
 }
